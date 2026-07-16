@@ -1,11 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import calStyles from './styles'
-
-const getUserHabits = (email) => {
-  const stored = localStorage.getItem(`habits_${email}`)
-  return stored ? JSON.parse(stored) : []
-}
+import { deleteStudentNote, getHabits, getStudentNotes, upsertStudentNote } from '../../api/client'
 
 const DAY_KEY_TO_JS = { D: 0, L: 1, M: 2, X: 3, J: 4, V: 5, S: 6 }
 
@@ -47,9 +43,13 @@ const formatDateFull = (iso) => {
 const Calendar = () => {
   const navigate = useNavigate()
 
-  const studentEmail = localStorage.getItem('studentEmail') || ''
-  const studentName  = localStorage.getItem('studentName')  || 'Estudiante'
   const adminPreviewMode = localStorage.getItem('adminPreviewMode') === 'true'
+  const studentEmail = adminPreviewMode
+    ? (localStorage.getItem('adminPreviewEmail') || '')
+    : (localStorage.getItem('studentEmail') || '')
+  const studentName  = adminPreviewMode
+    ? (localStorage.getItem('adminPreviewName') || 'Estudiante')
+    : (localStorage.getItem('studentName')  || 'Estudiante')
 
   useEffect(() => {
     const auth = localStorage.getItem('isStudentAuthenticated')
@@ -64,43 +64,49 @@ const Calendar = () => {
   const [selectedDate, setSelectedDate] = useState(toISO(today))
 
   const [habits, setHabits] = useState([])
-  useEffect(() => {
-    const email = adminPreviewMode
-      ? localStorage.getItem('adminPreviewEmail') || studentEmail
-      : studentEmail
-    setHabits(getUserHabits(email))
-  }, [studentEmail, adminPreviewMode])
-
-  useEffect(() => {
-    const handler = (e) => {
-      if (e.key && e.key.startsWith('habits_')) {
-        const email = adminPreviewMode
-          ? localStorage.getItem('adminPreviewEmail') || studentEmail
-          : studentEmail
-        setHabits(getUserHabits(email))
-      }
-    }
-    window.addEventListener('storage', handler)
-    return () => window.removeEventListener('storage', handler)
-  }, [studentEmail, adminPreviewMode])
-
-  const notesKey = `calendarNotes_${studentEmail}`
-  const loadNotes = () => {
-    try { return JSON.parse(localStorage.getItem(notesKey)) || {} }
-    catch { return {} }
-  }
-  const [notes, setNotes] = useState(loadNotes)
+  const [notes, setNotes] = useState({})
   const [noteInput, setNoteInput] = useState('')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!studentEmail) return
+    let ignore = false
+
+    getHabits(studentEmail)
+      .then(({ data }) => { if (!ignore) setHabits(data || []) })
+      .catch((err) => { if (!ignore) setError(err.message || 'No se pudieron cargar los hábitos.') })
+
+    getStudentNotes(studentEmail)
+      .then(({ data }) => { if (!ignore) setNotes(data || {}) })
+      .catch((err) => { if (!ignore) setError(err.message || 'No se pudieron cargar las notas.') })
+
+    return () => { ignore = true }
+  }, [studentEmail])
 
   useEffect(() => {
     setNoteInput(notes[selectedDate] || '')
-  }, [selectedDate])
+  }, [selectedDate, notes])
 
-  const saveNote = () => {
-    const next = { ...notes, [selectedDate]: noteInput.trim() }
-    if (!noteInput.trim()) delete next[selectedDate]
-    setNotes(next)
-    localStorage.setItem(notesKey, JSON.stringify(next))
+  const saveNote = async () => {
+    const trimmed = noteInput.trim()
+    try {
+      if (!trimmed) {
+        if (notes[selectedDate] !== undefined) {
+          await deleteStudentNote(studentEmail, selectedDate)
+        }
+        setNotes(prev => {
+          const next = { ...prev }
+          delete next[selectedDate]
+          return next
+        })
+      } else {
+        await upsertStudentNote(studentEmail, selectedDate, trimmed)
+        setNotes(prev => ({ ...prev, [selectedDate]: trimmed }))
+      }
+      setError('')
+    } catch (err) {
+      setError(err.message || 'No se pudo guardar la nota.')
+    }
   }
 
   const prevMonth = () => {
@@ -207,6 +213,7 @@ const Calendar = () => {
       </nav>
 
       <main style={calStyles.content}>
+        {error && <div style={calStyles.emptyText}>{error}</div>}
         <div style={calStyles.layout}>
 
           <div style={calStyles.calPanel}>
@@ -323,7 +330,7 @@ const Calendar = () => {
               </button>
             </div>
           </div>
-          
+
         </div>
       </main>
     </div>

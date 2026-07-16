@@ -1,35 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styles from './styles'
-
-const MOCK_USERS = [
-  { email: 'maria.garcia@universidad.edu',   password: '123456', nombre: 'María García López'   },
-  { email: 'carlos.mendoza@universidad.edu', password: '123456', nombre: 'Carlos Mendoza Ríos'  },
-  { email: 'estudiante@universidad.edu',     password: '123456', nombre: 'Estudiante Demo'       },
-]
-
-const getRegisteredUsers = () => {
-  const stored = localStorage.getItem('registeredUsers')
-  return stored ? JSON.parse(stored) : []
-}
-
-const saveRegisteredUsers = (users) => {
-  localStorage.setItem('registeredUsers', JSON.stringify(users))
-}
-
-const getSavedProfilePhoto = (email) => {
-  return localStorage.getItem(`profilePhoto_${email}`) || ''
-}
-
-const userExists = (email) => {
-  const allUsers = [...MOCK_USERS, ...getRegisteredUsers()]
-  return allUsers.some(u => u.email === email)
-}
-
-const findUser = (email, password) => {
-  const allUsers = [...MOCK_USERS, ...getRegisteredUsers()]
-  return allUsers.find(u => u.email === email && u.password === password)
-}
+import { studentLogin, studentRegister } from '../../api/client'
 
 const readFileAsDataURL = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader()
@@ -37,6 +9,17 @@ const readFileAsDataURL = (file) => new Promise((resolve, reject) => {
   reader.onerror = () => reject(new Error('No se pudo leer el archivo.'))
   reader.readAsDataURL(file)
 })
+
+const startStudentSession = (student) => {
+  localStorage.setItem('isStudentAuthenticated', 'true')
+  localStorage.setItem('studentName', student.nombre)
+  localStorage.setItem('studentEmail', student.email)
+  if (student.photo) {
+    localStorage.setItem('studentPhoto', student.photo)
+  } else {
+    localStorage.removeItem('studentPhoto')
+  }
+}
 
 function AppIcon() {
   return (
@@ -53,13 +36,14 @@ function AppIcon() {
 function LoginForm({ onSwitch }) {
   const navigate = useNavigate()
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     const auth = localStorage.getItem('isStudentAuthenticated')
     if (auth === 'true') navigate('/dashboard')
   }, [])
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     const email    = e.target.email.value.trim()
     const password = e.target.password.value
@@ -69,21 +53,17 @@ function LoginForm({ onSwitch }) {
       return
     }
 
-    const user = findUser(email, password)
+    setLoading(true)
+    setError('')
 
-    if (user) {
-      const profilePhoto = user.photo || getSavedProfilePhoto(email)
-      localStorage.setItem('isStudentAuthenticated', 'true')
-      localStorage.setItem('studentName', user.nombre)
-      localStorage.setItem('studentEmail', user.email)
-      if (profilePhoto) {
-        localStorage.setItem('studentPhoto', profilePhoto)
-      } else {
-        localStorage.removeItem('studentPhoto')
-      }
+    try {
+      const { data: student } = await studentLogin({ email, password })
+      startStudentSession(student)
       navigate('/dashboard')
-    } else {
-      setError('Correo o contraseña incorrectos. Usa: estudiante@universidad.edu / 123456')
+    } catch (err) {
+      setError(err.message || 'Correo o contraseña incorrectos.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -109,10 +89,10 @@ function LoginForm({ onSwitch }) {
           <input style={styles.input} type="password" id="password" name="password"
             placeholder="••••••••" onFocus={focusStyle} onBlur={blurStyle} />
         </div>
-        <button type="submit" style={styles.btnPrimary}
+        <button type="submit" style={{ ...styles.btnPrimary, opacity: loading ? 0.7 : 1 }} disabled={loading}
           onMouseEnter={e => (e.target.style.background = '#2563eb')}
           onMouseLeave={e => (e.target.style.background = '#3b82f6')}>
-          Iniciar Sesión
+          {loading ? 'Ingresando...' : 'Iniciar Sesión'}
         </button>
       </form>
 
@@ -135,6 +115,7 @@ function LoginForm({ onSwitch }) {
 function RegisterForm({ onSwitch }) {
   const navigate = useNavigate()
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   const [photoName, setPhotoName] = useState('')
 
   const handleSubmit = async (e) => {
@@ -157,12 +138,8 @@ function RegisterForm({ onSwitch }) {
       setError('La contraseña debe tener al menos 6 caracteres.')
       return
     }
-    if (userExists(email)) {
-      setError('Este correo electrónico ya está registrado.')
-      return
-    }
 
-    let photoData = null
+    let photoData = ''
     if (photoFile) {
       try {
         photoData = await readFileAsDataURL(photoFile)
@@ -172,21 +149,23 @@ function RegisterForm({ onSwitch }) {
       }
     }
 
-    const newUser = { email, password, nombre: name, photo: photoData }
-    const registeredUsers = getRegisteredUsers()
-    registeredUsers.push(newUser)
-    saveRegisteredUsers(registeredUsers)
+    setLoading(true)
+    setError('')
 
-    localStorage.setItem('isStudentAuthenticated', 'true')
-    localStorage.setItem('studentName', name)
-    localStorage.setItem('studentEmail', email)
-    if (photoData) {
-      localStorage.setItem('studentPhoto', photoData)
-      localStorage.setItem(`profilePhoto_${email}`, photoData)
-    } else {
-      localStorage.removeItem('studentPhoto')
+    try {
+      const { data: student } = await studentRegister({
+        nombre: name,
+        email,
+        password,
+        photo: photoData,
+      })
+      startStudentSession(student)
+      navigate('/dashboard')
+    } catch (err) {
+      setError(err.message || 'No se pudo completar el registro.')
+    } finally {
+      setLoading(false)
     }
-    navigate('/dashboard')
   }
 
   const focusStyle = (e) => { e.target.style.borderColor = '#3b82f6'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.15)' }
@@ -236,10 +215,10 @@ function RegisterForm({ onSwitch }) {
           </div>
           <input style={styles.hiddenInput} type="file" id="photo" name="photo" accept="image/*" onChange={handlePhotoChange} />
         </div>
-        <button type="submit" style={styles.btnPrimary}
+        <button type="submit" style={{ ...styles.btnPrimary, opacity: loading ? 0.7 : 1 }} disabled={loading}
           onMouseEnter={e => (e.target.style.background = '#2563eb')}
           onMouseLeave={e => (e.target.style.background = '#3b82f6')}>
-          Crear Cuenta
+          {loading ? 'Creando cuenta...' : 'Crear Cuenta'}
         </button>
       </form>
 

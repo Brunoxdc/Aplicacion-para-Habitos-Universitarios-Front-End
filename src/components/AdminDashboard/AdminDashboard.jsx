@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styles from './styles'
-
-const getRegisteredUsers = () => {
-  const stored = localStorage.getItem('registeredUsers')
-  return stored ? JSON.parse(stored) : []
-}
+import { getStudents } from '../../api/client'
 
 function NavLogo() {
   return (
@@ -39,16 +35,31 @@ function StatCard({ label, value, color }) {
 const AdminDashboard = () => {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
-  const [users, setUsers] = useState(getRegisteredUsers())
+  const [users, setUsers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    setUsers(getRegisteredUsers())
+    let ignore = false
+    setLoading(true)
+    getStudents()
+      .then(({ data }) => {
+        if (!ignore) setUsers(data || [])
+      })
+      .catch((err) => {
+        if (!ignore) setError(err.message || 'No se pudo cargar la lista de estudiantes.')
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+    return () => { ignore = true }
   }, [])
 
   const handleViewStudent = (student) => {
     localStorage.setItem('adminPreviewMode', 'true')
     localStorage.setItem('adminPreviewEmail', student.email)
     localStorage.setItem('adminPreviewName', student.nombre)
+    localStorage.setItem('adminPreviewPhoto', student.photo || '')
     navigate('/dashboard')
   }
 
@@ -67,18 +78,17 @@ const AdminDashboard = () => {
 
   const handleLogout = () => {
     localStorage.removeItem('isAdminAuthenticated')
+    localStorage.removeItem('adminName')
+    localStorage.removeItem('adminEmail')
     navigate('/admin')
   }
 
   const handleEditStudent = (student) => {
-    const savedPhoto = localStorage.getItem(`profilePhoto_${student.email}`)
     localStorage.setItem('isStudentAuthenticated', 'true')
     localStorage.setItem('studentName', student.nombre)
     localStorage.setItem('studentEmail', student.email)
     if (student.photo) {
       localStorage.setItem('studentPhoto', student.photo)
-    } else if (savedPhoto) {
-      localStorage.setItem('studentPhoto', savedPhoto)
     } else {
       localStorage.removeItem('studentPhoto')
     }
@@ -131,6 +141,8 @@ const AdminDashboard = () => {
             />
           </div>
 
+          {error && <div style={styles.tdMuted}>{error}</div>}
+
           <table style={styles.table}>
             <thead>
               <tr>
@@ -142,7 +154,13 @@ const AdminDashboard = () => {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={5} style={{ ...styles.td, textAlign: 'center', color: '#94a3b8', padding: '40px' }}>
+                    Cargando estudiantes...
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={5} style={{ ...styles.td, textAlign: 'center', color: '#94a3b8', padding: '40px' }}>
                     No se encontraron estudiantes.

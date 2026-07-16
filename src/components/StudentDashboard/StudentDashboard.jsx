@@ -6,38 +6,13 @@ import WelcomeSection from './components/WelcomeSection'
 import HabitHeader from './components/HabitHeader'
 import NewHabitForm from './components/NewHabitForm'
 import HabitCard from './components/HabitCard'
-
-const DEFAULT_HABITS = [
-  { id: 1, icon: '📚', nombre: 'Lectura diaria',   meta: '30 min / día', dias: [], motivo: '', actividades: [] },
-  { id: 2, icon: '🏃', nombre: 'Ejercicio',        meta: '3 veces / sem', dias: [], motivo: '', actividades: [] },
-  { id: 3, icon: '💧', nombre: 'Tomar agua',       meta: '2 litros / día', dias: [], motivo: '', actividades: [] },
-]
-
-const getUserHabits = (email) => {
-  const stored = localStorage.getItem(`habits_${email}`)
-  return stored ? JSON.parse(stored) : null
-}
-
-const saveUserHabits = (email, habits) => {
-  localStorage.setItem(`habits_${email}`, JSON.stringify(habits))
-}
-
-const getRegisteredUsers = () => {
-  const stored = localStorage.getItem('registeredUsers')
-  return stored ? JSON.parse(stored) : []
-}
-
-const getRegisteredUser = (email) => {
-  return getRegisteredUsers().find(user => user.email === email) || null
-}
-
-const getUserPreviewPhoto = (email) => {
-  const photoKey = `profilePhoto_${email}`
-  const stored = localStorage.getItem(photoKey)
-  if (stored) return stored
-  const user = getRegisteredUser(email)
-  return user?.photo || ''
-}
+import {
+  createHabit,
+  deleteHabit,
+  getHabits,
+  patchStudentPhoto,
+  updateHabit,
+} from '../../api/client'
 
 const DAYS_OF_WEEK = [
   { key: 'L', label: 'Lun' },
@@ -56,17 +31,19 @@ const StudentDashboard = () => {
   const adminImpersonating = localStorage.getItem('adminImpersonating') === 'true' && localStorage.getItem('isAdminAuthenticated') === 'true'
   const previewEmail = adminPreviewMode ? localStorage.getItem('adminPreviewEmail') || '' : ''
   const previewName = adminPreviewMode ? localStorage.getItem('adminPreviewName') || '' : ''
+  const previewPhoto = adminPreviewMode ? localStorage.getItem('adminPreviewPhoto') || '' : ''
 
   const studentName = adminPreviewMode
     ? (previewName || 'Estudiante')
     : (localStorage.getItem('studentName') || 'Estudiante')
   const studentEmail = adminPreviewMode ? previewEmail : (localStorage.getItem('studentEmail') || '')
   const studentPhoto = adminPreviewMode
-    ? (getUserPreviewPhoto(previewEmail) || '')
+    ? previewPhoto
     : (localStorage.getItem('studentPhoto') || '')
   const initials = studentName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
   const [habits, setHabits] = useState([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [newHabit, setNewHabit] = useState({ nombre: '', meta: '', icon: '', dias: [], motivo: '' })
   const [activityText, setActivityText] = useState({})
@@ -96,14 +73,20 @@ const StudentDashboard = () => {
       return
     }
 
-    const savedHabits = getUserHabits(studentEmail)
-    if (savedHabits) {
-      setHabits(savedHabits)
-    } else {
-      const initialHabits = DEFAULT_HABITS.map(habit => ({ ...habit, actividades: [] }))
-      setHabits(initialHabits)
-      saveUserHabits(studentEmail, initialHabits)
-    }
+    let ignore = false
+    setLoading(true)
+    getHabits(studentEmail)
+      .then(({ data }) => {
+        if (!ignore) setHabits(data || [])
+      })
+      .catch((err) => {
+        if (!ignore) setError(err.message || 'No se pudieron cargar tus hábitos.')
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false)
+      })
+
+    return () => { ignore = true }
   }, [navigate, studentEmail, adminPreviewMode, previewEmail])
 
   const handleExitAdmin = () => {
@@ -111,6 +94,7 @@ const StudentDashboard = () => {
       localStorage.removeItem('adminPreviewMode')
       localStorage.removeItem('adminPreviewEmail')
       localStorage.removeItem('adminPreviewName')
+      localStorage.removeItem('adminPreviewPhoto')
       navigate('/admin/dashboard')
       return
     }
@@ -137,24 +121,13 @@ const StudentDashboard = () => {
     navigate('/login')
   }
 
-  const saveRegisteredUsers = (users) => {
-    localStorage.setItem('registeredUsers', JSON.stringify(users))
-  }
-
-  const saveProfilePhoto = (photoData) => {
-    localStorage.setItem('studentPhoto', photoData)
-    localStorage.setItem(`profilePhoto_${studentEmail}`, photoData)
-    setStudentPhotoState(photoData)
-  }
-
-  const updateUserPhotoInRegisteredUsers = (photoData) => {
-    const users = getRegisteredUsers()
-    const updatedUsers = users.map(user => {
-      if (user.email !== studentEmail) return user
-      return { ...user, photo: photoData }
-    })
-    if (updatedUsers.some(user => user.email === studentEmail)) {
-      saveRegisteredUsers(updatedUsers)
+  const saveProfilePhoto = async (photoData) => {
+    try {
+      await patchStudentPhoto(studentEmail, photoData)
+      localStorage.setItem('studentPhoto', photoData)
+      setStudentPhotoState(photoData)
+    } catch (err) {
+      setError(err.message || 'No se pudo actualizar la foto de perfil.')
     }
   }
 
@@ -168,9 +141,7 @@ const StudentDashboard = () => {
     }
     const reader = new FileReader()
     reader.onload = () => {
-      const photoData = reader.result
-      saveProfilePhoto(photoData)
-      updateUserPhotoInRegisteredUsers(photoData)
+      saveProfilePhoto(reader.result)
       setOpenProfileMenu(false)
       setError('')
     }
@@ -180,12 +151,16 @@ const StudentDashboard = () => {
     reader.readAsDataURL(file)
   }
 
-  const handleRemoveProfilePhoto = () => {
+  const handleRemoveProfilePhoto = async () => {
     if (isReadOnly) return
-    localStorage.removeItem('studentPhoto')
-    localStorage.removeItem(`profilePhoto_${studentEmail}`)
-    setStudentPhotoState('')
-    setOpenProfileMenu(false)
+    try {
+      await patchStudentPhoto(studentEmail, '')
+      localStorage.removeItem('studentPhoto')
+      setStudentPhotoState('')
+      setOpenProfileMenu(false)
+    } catch (err) {
+      setError(err.message || 'No se pudo quitar la foto de perfil.')
+    }
   }
 
   const toggleProfileMenu = () => {
@@ -216,7 +191,7 @@ const StudentDashboard = () => {
     }
   }
 
-  const handleAddHabit = (e) => {
+  const handleAddHabit = async (e) => {
     if (isReadOnly) return
     e.preventDefault()
     if (!newHabit.nombre.trim() || !newHabit.meta.trim()) {
@@ -224,78 +199,82 @@ const StudentDashboard = () => {
       return
     }
 
-    const nextHabit = {
-      id: Date.now(),
-      icon: newHabit.icon || '✨',
-      nombre: newHabit.nombre.trim(),
-      meta: newHabit.meta.trim(),
-      dias: newHabit.dias,
-      motivo: newHabit.motivo.trim(),
-      actividades: [],
+    try {
+      const { data: created } = await createHabit(studentEmail, {
+        icon: newHabit.icon || '✨',
+        nombre: newHabit.nombre.trim(),
+        meta: newHabit.meta.trim(),
+        dias: newHabit.dias,
+        motivo: newHabit.motivo.trim(),
+        actividades: [],
+      })
+      setHabits(prev => [...prev, created])
+      setNewHabit({ nombre: '', meta: '', icon: '', dias: [], motivo: '' })
+      setError('')
+    } catch (err) {
+      setError(err.message || 'No se pudo crear el hábito.')
     }
+  }
 
-    const nextHabits = [...habits, nextHabit]
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
-    setNewHabit({ nombre: '', meta: '', icon: '', dias: [], motivo: '' })
-    setError('')
+  const applyHabitUpdate = async (habitId, patch) => {
+    try {
+      const { data: updated } = await updateHabit(studentEmail, habitId, patch)
+      setHabits(prev => prev.map(habit => (habit.id === habitId ? updated : habit)))
+      return updated
+    } catch (err) {
+      setError(err.message || 'No se pudo actualizar el hábito.')
+      return null
+    }
   }
 
   const handleActivityChange = (habitId, value) => {
     setActivityText(prev => ({ ...prev, [habitId]: value }))
   }
 
-  const handleAddActivity = (habitId) => {
+  const handleAddActivity = async (habitId) => {
     if (isReadOnly) return
     const text = (activityText[habitId] || '').trim()
     if (!text) return
 
-    const nextHabits = habits.map(habit => {
-      if (habit.id !== habitId) return habit
-      const nextActivities = [
-        ...habit.actividades,
-        {
-          id: Date.now(),
-          texto: text,
-          completada: false,
-          fecha: new Date().toLocaleDateString(),
-          fechaVence: activityDueDate[habitId] || '',
-        },
-      ]
-      return { ...habit, actividades: nextActivities }
-    })
+    const habit = habits.find(h => h.id === habitId)
+    if (!habit) return
 
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
-    setActivityText(prev => ({ ...prev, [habitId]: '' }))
-    setActivityDueDate(prev => ({ ...prev, [habitId]: '' }))
+    const nextActividades = [
+      ...habit.actividades,
+      {
+        id: Date.now(),
+        texto: text,
+        completada: false,
+        fecha: new Date().toLocaleDateString(),
+        fechaVence: activityDueDate[habitId] || '',
+      },
+    ]
+
+    const updated = await applyHabitUpdate(habitId, { actividades: nextActividades })
+    if (updated) {
+      setActivityText(prev => ({ ...prev, [habitId]: '' }))
+      setActivityDueDate(prev => ({ ...prev, [habitId]: '' }))
+    }
   }
 
-  const toggleActivityCompletion = (habitId, activityId) => {
+  const toggleActivityCompletion = async (habitId, activityId) => {
     if (isReadOnly) return
-    const nextHabits = habits.map(habit => {
-      if (habit.id !== habitId) return habit
-      const nextActivities = habit.actividades.map(activity => {
-        if (activity.id !== activityId) return activity
-        return { ...activity, completada: !activity.completada }
-      })
-      return { ...habit, actividades: nextActivities }
-    })
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
+    const habit = habits.find(h => h.id === habitId)
+    if (!habit) return
+    const nextActividades = habit.actividades.map(activity =>
+      activity.id === activityId ? { ...activity, completada: !activity.completada } : activity
+    )
+    await applyHabitUpdate(habitId, { actividades: nextActividades })
   }
 
-  const handleRemoveActivity = (habitId, activityId) => {
+  const handleRemoveActivity = async (habitId, activityId) => {
     if (isReadOnly) return
     const confirmed = window.confirm('¿Estás seguro de que deseas eliminar esta actividad?')
     if (!confirmed) return
-    const nextHabits = habits.map(habit => {
-      if (habit.id !== habitId) return habit
-      const nextActivities = habit.actividades.filter(activity => activity.id !== activityId)
-      return { ...habit, actividades: nextActivities }
-    })
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
+    const habit = habits.find(h => h.id === habitId)
+    if (!habit) return
+    const nextActividades = habit.actividades.filter(activity => activity.id !== activityId)
+    await applyHabitUpdate(habitId, { actividades: nextActividades })
   }
 
   const toggleActivityMenu = (habitId, activityId) => {
@@ -309,25 +288,25 @@ const StudentDashboard = () => {
     setOpenActivityMenu(null)
   }
 
-  const handleSaveActivityEdit = () => {
+  const handleSaveActivityEdit = async () => {
     if (isReadOnly) return
     const texto = editingActivity.texto.trim()
     if (!texto) {
       setError('El texto de la actividad no puede estar vacío.')
       return
     }
-    const nextHabits = habits.map(habit => {
-      if (habit.id !== editingActivity.habitId) return habit
-      const nextActivities = habit.actividades.map(activity => {
-        if (activity.id !== editingActivity.activityId) return activity
-        return { ...activity, texto, fechaVence: editingActivity.fechaVence || '' }
-      })
-      return { ...habit, actividades: nextActivities }
-    })
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
-    setEditingActivity({ habitId: null, activityId: null, texto: '', fechaVence: '' })
-    setError('')
+    const habit = habits.find(h => h.id === editingActivity.habitId)
+    if (!habit) return
+    const nextActividades = habit.actividades.map(activity =>
+      activity.id === editingActivity.activityId
+        ? { ...activity, texto, fechaVence: editingActivity.fechaVence || '' }
+        : activity
+    )
+    const updated = await applyHabitUpdate(editingActivity.habitId, { actividades: nextActividades })
+    if (updated) {
+      setEditingActivity({ habitId: null, activityId: null, texto: '', fechaVence: '' })
+      setError('')
+    }
   }
 
   const handleCancelEditActivity = () => {
@@ -346,7 +325,7 @@ const StudentDashboard = () => {
     setOpenHabitMenu(prev => (prev === habitId ? null : habitId))
   }
 
-  const handleSaveHabitEdit = (habitId) => {
+  const handleSaveHabitEdit = async (habitId) => {
     if (isReadOnly) return
     const trimmedName = editingHabitValues.nombre.trim()
     const trimmedMeta = editingHabitValues.meta.trim()
@@ -354,22 +333,18 @@ const StudentDashboard = () => {
       setError('El nombre y la meta del hábito no pueden estar vacíos.')
       return
     }
-    const nextHabits = habits.map(habit => {
-      if (habit.id !== habitId) return habit
-      return {
-        ...habit,
-        nombre: trimmedName,
-        meta: trimmedMeta,
-        icon: editingHabitValues.icon || '✨',
-        dias: editingHabitValues.dias,
-        motivo: editingHabitValues.motivo.trim(),
-      }
+    const updated = await applyHabitUpdate(habitId, {
+      nombre: trimmedName,
+      meta: trimmedMeta,
+      icon: editingHabitValues.icon || '✨',
+      dias: editingHabitValues.dias,
+      motivo: editingHabitValues.motivo.trim(),
     })
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
-    setEditingHabitId(null)
-    setEditingHabitValues({ nombre: '', meta: '', icon: '', dias: [], motivo: '' })
-    setError('')
+    if (updated) {
+      setEditingHabitId(null)
+      setEditingHabitValues({ nombre: '', meta: '', icon: '', dias: [], motivo: '' })
+      setError('')
+    }
   }
 
   const handleCancelEditHabit = () => {
@@ -378,24 +353,24 @@ const StudentDashboard = () => {
     setError('')
   }
 
-  const handleResetHabitProgress = (habitId) => {
+  const handleResetHabitProgress = async (habitId) => {
     if (isReadOnly) return
-    const nextHabits = habits.map(habit => {
-      if (habit.id !== habitId) return habit
-      const resetActivities = habit.actividades.map(activity => ({ ...activity, completada: false }))
-      return { ...habit, actividades: resetActivities }
-    })
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
+    const habit = habits.find(h => h.id === habitId)
+    if (!habit) return
+    const nextActividades = habit.actividades.map(activity => ({ ...activity, completada: false }))
+    await applyHabitUpdate(habitId, { actividades: nextActividades })
   }
 
-  const handleRemoveHabit = (habitId) => {
+  const handleRemoveHabit = async (habitId) => {
     if (isReadOnly) return
     const confirmed = window.confirm('¿Estás seguro de que deseas eliminar este hábito?')
     if (!confirmed) return
-    const nextHabits = habits.filter(habit => habit.id !== habitId)
-    setHabits(nextHabits)
-    saveUserHabits(studentEmail, nextHabits)
+    try {
+      await deleteHabit(studentEmail, habitId)
+      setHabits(prev => prev.filter(habit => habit.id !== habitId))
+    } catch (err) {
+      setError(err.message || 'No se pudo eliminar el hábito.')
+    }
   }
 
   const formatDueDate = (iso) => {
@@ -457,44 +432,48 @@ const StudentDashboard = () => {
 
         {error && <div style={styles.errorBox}>{error}</div>}
 
-        <div style={styles.habitsGrid}>
-          {habits.map(habit => (
-            <HabitCard
-              key={habit.id}
-              habit={habit}
-              isReadOnly={isReadOnly}
-              openHabitMenu={openHabitMenu}
-              toggleHabitMenu={toggleHabitMenu}
-              handleStartEditHabit={handleStartEditHabit}
-              handleResetHabitProgress={handleResetHabitProgress}
-              handleRemoveHabit={handleRemoveHabit}
-              formatDias={formatDias}
-              editingHabitId={editingHabitId}
-              editingHabitValues={editingHabitValues}
-              setEditingHabitValues={setEditingHabitValues}
-              daysOfWeek={DAYS_OF_WEEK}
-              toggleDay={toggleDay}
-              handleCancelEditHabit={handleCancelEditHabit}
-              handleSaveHabitEdit={handleSaveHabitEdit}
-              computeProgress={computeProgress}
-              editingActivity={editingActivity}
-              setEditingActivity={setEditingActivity}
-              toggleActivityCompletion={toggleActivityCompletion}
-              openActivityMenu={openActivityMenu}
-              toggleActivityMenu={toggleActivityMenu}
-              handleStartEditActivity={handleStartEditActivity}
-              handleRemoveActivity={handleRemoveActivity}
-              handleCancelEditActivity={handleCancelEditActivity}
-              handleSaveActivityEdit={handleSaveActivityEdit}
-              activityText={activityText}
-              handleActivityChange={handleActivityChange}
-              activityDueDate={activityDueDate}
-              setActivityDueDate={setActivityDueDate}
-              handleAddActivity={handleAddActivity}
-              formatDueDate={formatDueDate}
-            />
-          ))}
-        </div>
+        {loading ? (
+          <p style={styles.emptyText}>Cargando hábitos...</p>
+        ) : (
+          <div style={styles.habitsGrid}>
+            {habits.map(habit => (
+              <HabitCard
+                key={habit.id}
+                habit={habit}
+                isReadOnly={isReadOnly}
+                openHabitMenu={openHabitMenu}
+                toggleHabitMenu={toggleHabitMenu}
+                handleStartEditHabit={handleStartEditHabit}
+                handleResetHabitProgress={handleResetHabitProgress}
+                handleRemoveHabit={handleRemoveHabit}
+                formatDias={formatDias}
+                editingHabitId={editingHabitId}
+                editingHabitValues={editingHabitValues}
+                setEditingHabitValues={setEditingHabitValues}
+                daysOfWeek={DAYS_OF_WEEK}
+                toggleDay={toggleDay}
+                handleCancelEditHabit={handleCancelEditHabit}
+                handleSaveHabitEdit={handleSaveHabitEdit}
+                computeProgress={computeProgress}
+                editingActivity={editingActivity}
+                setEditingActivity={setEditingActivity}
+                toggleActivityCompletion={toggleActivityCompletion}
+                openActivityMenu={openActivityMenu}
+                toggleActivityMenu={toggleActivityMenu}
+                handleStartEditActivity={handleStartEditActivity}
+                handleRemoveActivity={handleRemoveActivity}
+                handleCancelEditActivity={handleCancelEditActivity}
+                handleSaveActivityEdit={handleSaveActivityEdit}
+                activityText={activityText}
+                handleActivityChange={handleActivityChange}
+                activityDueDate={activityDueDate}
+                setActivityDueDate={setActivityDueDate}
+                handleAddActivity={handleAddActivity}
+                formatDueDate={formatDueDate}
+              />
+            ))}
+          </div>
+        )}
       </main>
     </div>
   )

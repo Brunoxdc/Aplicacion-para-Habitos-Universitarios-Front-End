@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styles from './styles'
-
-const ADMIN_EMAIL    = 'admin@habitos.edu'
-const ADMIN_PASSWORD = 'admin123'
+import { adminLogin } from '../../api/client'
 
 const AdminLogin = () => {
   const navigate = useNavigate()
@@ -15,7 +13,7 @@ const AdminLogin = () => {
     if (isAdmin === 'true') navigate('/admin/dashboard')
   }, [])
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     const email    = e.target.email.value.trim()
     const password = e.target.password.value
@@ -28,15 +26,17 @@ const AdminLogin = () => {
     setLoading(true)
     setError('')
 
-    setTimeout(() => {
-      if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-        localStorage.setItem('isAdminAuthenticated', 'true')
-        navigate('/admin/dashboard')
-      } else {
-        setError(`Credenciales incorrectas. Usa ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}`)
-        setLoading(false)
-      }
-    }, 700)
+    try {
+      const { data: admin } = await adminLogin({ email, password })
+      localStorage.setItem('isAdminAuthenticated', 'true')
+      localStorage.setItem('adminName', admin.nombre)
+      localStorage.setItem('adminEmail', admin.email)
+      navigate('/admin/dashboard')
+    } catch (err) {
+      setError(err.message || 'Credenciales de administrador inválidas.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const focusStyle = (e) => {

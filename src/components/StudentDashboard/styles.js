@@ -552,6 +552,7 @@ const styles = {
   gap: '8px',
   alignItems: 'center',
   },
+  
 }
 
 export default styles
